@@ -2,7 +2,11 @@
 
 # Script created 18/04/2024 7:26
 
-# Check if /mnt/dd2bag exists and is empty
+
+# Sets up aip variable based on stdin
+aip="$1"
+
+# Checks if /mnt/dd2bag exists and is empty
 if [ -d "/mnt/dd2bag" ]; then
     if [ "$(ls -A /mnt/dd2bag)" ]; then
         echo "Error: The mountpoint /mnt/dd2bag is not empty. Exiting."
@@ -30,21 +34,27 @@ check_error() {
 
 # Function to cleanup after script execution
 cleanup() {
-    if [ -d "/mnt/dd2bag" ]; then
-        sudo umount /mnt/dd2bag &> /dev/null
-        rmdir /mnt/dd2bag
+    if [ -d $mountpoint ]; then
+        sudo umount $mountpoint &> /dev/null
+        rmdir $mountpoint
+		rm -r $tempdir
     fi
 }
 
 # Trap for cleanup on script exit
 trap cleanup EXIT
 
+# Create temporary directory for creating the bag
+mountpoint="/mnt/dd2bag"
+tempdir="$(mktemp -d $(pwd)/temp-XXXXX)"
+check_error "making the temp directory"
+
 # Mount CD drive as read-only
-sudo mount -o ro /dev/sr0 /mnt/dd2bag
+sudo mount -o ro /dev/sr0 $mountpoint
 check_error "mounting CD drive"
 
 # Create disk image using ddrescue
-sudo ddrescue /mnt/dd2bag /path/to/disk_image.iso
+sudo ddrescue $mountpoint $tempdir/"$aip".dd
 check_error "creating disk image"
 
 # Eject the disk
@@ -52,8 +62,7 @@ eject /dev/sr0
 check_error "ejecting disk"
 
 # Create BagIt folder structure
-mkdir -p /path/to/bagit/data
-mkdir -p /path/to/bagit/metadata
+python3 -m bagit --contact-name $tempdir/"$aip"
 
 # Move disk image into BagIt folder structure
 mv /path/to/disk_image.iso /path/to/bagit/data/disk_image.iso
