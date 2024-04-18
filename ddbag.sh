@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# Script created 18/04/2024 7:26
+
 # Check if /mnt/dd2bag exists and is empty
 if [ -d "/mnt/dd2bag" ]; then
     if [ "$(ls -A /mnt/dd2bag)" ]; then
