@@ -187,7 +187,7 @@ _cleanup() {
 }
 
 # Trap for cleanup on script exit
-#trap _cleanup EXIT
+trap _cleanup EXIT
 
 
 # Create temporary directory for creating the bag
