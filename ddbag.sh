@@ -173,9 +173,9 @@ _update_tag() {
 	local sha256=$(sha256sum "$file_path" | awk '{print $1}')
 	local sha512=$(sha512sum "$file_path" | awk '{print $1}')
 	local filename=$(basename "$file_path")
-	echo "$sha256 $filename" >> $tempdir/"$AIP"/tagmanifest-sha256.txt
+	echo "$sha256 $filename" >> "$tempdir"/"$AIP"/tagmanifest-sha256.txt
 	_check_error "Updating sha256 tag"
-	echo "$sha512 $filename" >> $tempdir/"$AIP"/tagmanifest-sha512.txt
+	echo "$sha512 $filename" >> "$tempdir"/"$AIP"/tagmanifest-sha512.txt
 	_check_error "Updating sha512 tag"
 }
 
@@ -187,7 +187,7 @@ _cleanup() {
 }
 
 # Trap for cleanup on script exit
-trap _cleanup EXIT
+#trap _cleanup EXIT
 
 
 # Create temporary directory for creating the bag
@@ -220,6 +220,7 @@ echo "Disk Imaging complete! You can remove the disk."
 if [[ "$premis" == true ]]; then
 	
 	eventid=$(uuidgen)
+	objectxml=""
 	agentxml+="
 		<agent>
 			<agentname>ddrescue</agentname>
@@ -230,28 +231,31 @@ if [[ "$premis" == true ]]; then
 			<eventdate>$(date -Ins)</eventdate>
 		</event>"
 	
-	for file in $(find "$tempdir"/"$AIP" -type f); do
+	exec 3<&0
+	
+	find "$tempdir"/"$AIP" -type f -print |
+	while IFS= read -r file; do
 		extension="${file##*.}"
 		AIPbase=$(basename "$file")
 		folderpath="${file%/*}"
 		AIPdir=$(basename "$folderpath")	
 		
-		if [[ -f "$file"  ]] && [[ "$extension" == "dd" ]]; then
+		if [[ "$extension" == "dd" ]]; then
 			if  [[ "$labeller" == true ]]; then
-				read -p "Enter disk label for $file or leave blank: " label
+				read -p "Enter disk label for $file or leave blank: " label <&3
 			fi
 				
-			objectxml+="
+			echo -e "
 			<file>
 				<objectid>"$AIPbase"</objectid>
 				<fixity>$(sha256sum "$file" | awk '{print $1}')</fixity>
 				<size>$(stat -c %s "$file")</size>
 				<format>linux dd raw disk image</format>
 				<label>"$label"</label>
-			</file>"
-		elif [[ -f "$file"  ]] && [[ "$extension" == "txt" ]]; then
+			</file>" >> "$tempxml"
+		elif [[ "$extension" == "txt" ]]; then
 			IFS='_' read -r AIP counter ext <<< "$AIPdir"
-			objectxml+="
+			echo -e "
 			<file>
 				<objectid>"$AIPdir"/"$AIPbase"</objectid>
 				<fixity>$(sha256sum "$file" | awk '{print $1}')</fixity>
@@ -263,18 +267,17 @@ if [[ "$premis" == true ]]; then
 				<linkedobjectvalue>"${AIP}"_"${counter}".dd</linkedobjectvalue>
 				<linkedeventtype>imaging</linkedeventtype>
 				<linkedeventvalue>"$eventid"</linkedeventvalue>
-				
-			</file>"
-			
+			</file>" >> "$tempxml"		
 		fi   
-	done	
+	done
+	
+	exec 3<&-	
 
-	echo -e "$objectxml" >> $tempxml 
-	echo -e "$agentxml" >> $tempxml 
-	echo -e "$eventxml" >> $tempxml 
+	echo -e "$agentxml" >> "$tempxml"
+	echo -e "$eventxml" >> "$tempxml" 
 	echo -e "</data>" >> "$tempxml"
 
-	xsltproc "$SCRIPTDIR"/resources/dd2premis.xsl $tempxml > $premisxml
+	xsltproc "$SCRIPTDIR"/resources/dd2premis.xsl "$tempxml" > "$premisxml"
 
 	_check_error "generating premis xml"
 
@@ -287,10 +290,10 @@ python3 -m bagit --quiet "$tempdir"/"$AIP"
 _check_error "Creating Bagit Structure"
 
 # Move Premis XML file to the top level of bagit structure and update tags
-mv $premisxml "$tempdir"/"$AIP"/premis.xml
+mv "$premisxml" "$tempdir"/"$AIP"/premis.xml
 _update_tag "$tempdir"/"$AIP"/premis.xml
 
 # Move Bagit out of temp directory
-mv "$tempdir"/"$AIP" $target
+mv "$tempdir"/"$AIP" "$target"
 
 echo "Bagging complete!"
