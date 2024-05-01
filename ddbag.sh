@@ -2,7 +2,7 @@
 
 # Script created 18/04/2024 7:26
 
-VERSION="0.3"
+VERSION="0.4"
 SCRIPTNAME="dd2bag"
 SCRIPTDIR="$(dirname ${0})"
 DATE="$(date +%m-%d-%Y-%T)"
@@ -32,9 +32,11 @@ Creates a disk image and then packages in a bagit format
 The default disk drive is set to: "/dev/sr0". If yours is different, this can be changed in the config.txt file.
 
 Options:
+ -d, --idirect			Turns off ddrescue direct disc access, which is enabled by default
+ -l, --label			Adds information to "originalName" element in PREMIS XML output.
  -m, --multidisk		Enables prompt to image more than one disk
  -p, --premis			Generates a simple PREMIS XML file at top level of bagit directory
- -l, --label			Adds information to "originalName" element in PREMIS XML output.
+ -r, --retry <n>		Set the number of times ddrescue will retry scanning the disk. 
 
 EOF
 }
@@ -44,26 +46,35 @@ for arg in "$@"; do
   shift
   case "$arg" in
     '--help')			set -- "$@" '-h'   ;;
+    '--imager')			set -- "$@" '-i'   ;;
+    '--idirect')		set -- "$@" '-d'   ;;
+    '--label')			set -- "$@" '-l'   ;;
     '--multidisk')		set -- "$@" '-m'   ;;
     '--premis')			set -- "$@" '-p'   ;;
-    '--label')			set -- "$@" '-l'   ;;
+    '--retry')			set -- "$@" '-r'   ;;
     *)				set -- "$@" "$arg" ;;
   esac
 done
 
 # Default behavior
+imager=ddrescue
+idirect="-d"
 multidisk=false
 premis=false
 labeller=false
+retry=3
 
 # Parse short options
 OPTIND=1
-while getopts "hmpl" opt ; do
+while getopts "hi:dlmpr:" opt ; do
 	case "$opt" in
 		'h') _help ; exit 0 ;;
+		'i') imager=$OPTARG ;;
+		'd') idirect="" ;;
+		'l') labeller=true ;;
 		'm') multidisk=true ;;
 		'p') premis=true ;;
-		'l') labeller=true ;;
+		'r') retry=$OPTARG ;;
 		'?') _usage >&2; exit 1 ;;
 	esac
 done
@@ -111,7 +122,7 @@ _check_error() {
 # Function to check and handle disk imaging errors
 _check_disk_error() {
     if [ $? -ne 0 ]; then
-        echo "Error occurred during disk imaging of ${AIP}_${count}.dd. Continuing, but this may need further passes with ddrescue."
+        echo "Error occurred during disk imaging of ${AIP}_${count}. Continuing, but this may need further passes."
     fi
 }
 
@@ -120,10 +131,33 @@ _disk-image() {
 	# Check if the disk is present using blkid
 	while true; do
 		if blkid /dev/sr0 &>/dev/null; then
-			ddrescuelogs="$tempdir/$AIP/${AIP}_${count}_ddrescuelogs"
-			mkdir -p "$ddrescuelogs"
-			ddrescue -d -r3 --log-events="$ddrescuelogs"/eventlog.txt --log-rates="$ddrescuelogs"/ratelog.txt --log-reads="$ddrescuelogs"/readlog.txt $DRIVE "$tempdir"/"$AIP"/"$AIP"_"$count".dd "$ddrescuelogs"/mapfile.txt
-			_check_disk_error
+			if [[ "$imager" == cdrdao ]]; then
+#				cdrdao read-cd --read-raw --datafile \
+#				"$tempdir"/"$AIP"/"$AIP"_"$count".bin \
+#				"$tempdir"/"$AIP"/"$AIP"_"$count".toc
+#				_check_disk_error
+				read -p "Move files over" wait
+				toc2cue "$tempdir"/"$AIP"/"$AIP"_"$count".toc \
+				"$tempdir"/"$AIP"/"$AIP"_"$count"_temp.cue
+				_check_error "disk imaging"
+				sed "1s|^.*|FILE \"${AIP}_${count}.bin\" BINARY|" \
+				"$tempdir"/"$AIP"/"$AIP"_"$count"_temp.cue \
+				> "$tempdir"/"$AIP"/"$AIP"_"$count".cue
+				rm "$tempdir"/"$AIP"/"$AIP"_"$count".toc
+				rm "$tempdir"/"$AIP"/"$AIP"_"$count"_temp.cue
+				agentname=cdrdao
+			else			
+				ddrescuelogs="$tempdir/$AIP/${AIP}_${count}_ddrescuelogs"
+				mkdir -p "$ddrescuelogs"
+				ddrescue -r"$retry" $idirect \
+				--log-events="$ddrescuelogs"/eventlog.txt \
+				--log-rates="$ddrescuelogs"/ratelog.txt \
+				--log-reads="$ddrescuelogs"/readlog.txt \
+				$DRIVE "$tempdir"/"$AIP"/"$AIP"_"$count".dd \
+				"$ddrescuelogs"/mapfile.txt
+				_check_disk_error
+				agentname=ddrescue
+			fi
 #			touch "$tempdir"/"$AIP"/"$AIP"_"$count".txt
 #			echo "this is content" > "$tempdir"/"$AIP"/"$AIP"_"$count".txt
 			echo "Created disk image $count"
@@ -146,6 +180,7 @@ _disk-image() {
 		fi
 	done
 }
+
 
 # Function to check for multidisk imaging
 _multi-image() {
@@ -205,9 +240,11 @@ echo "<data>" >> "$tempxml"
 # Make subdirectory for disk image
 mkdir "$tempdir"/"$AIP"
 
-# Create disk image using ddrescue, with loop for imaging multiple disks
+# Create disk image, with loop for imaging multiple disks
+
 _disk-image
 _check_error "disk imaging"
+
 if [[ "$multidisk" == true ]]; then
 	_multi-image
 	_check_error "multidisk imaging"
@@ -223,7 +260,7 @@ if [[ "$premis" == true ]]; then
 	objectxml=""
 	agentxml+="
 		<agent>
-			<agentname>ddrescue</agentname>
+			<agentname>$agentname</agentname>
 		</agent>"
 	eventxml+="
 		<event>
@@ -232,6 +269,7 @@ if [[ "$premis" == true ]]; then
 		</event>"
 	
 	exec 3<&0
+	exec 4<&0
 	
 	find "$tempdir"/"$AIP" -type f -print |
 	while IFS= read -r file; do
@@ -253,6 +291,41 @@ if [[ "$premis" == true ]]; then
 				<format>linux dd raw disk image</format>
 				<label>"$label"</label>
 			</file>" >> "$tempxml"
+		elif [[ "$extension" == "bin" ]]; then
+			if  [[ "$labeller" == true ]]; then
+				read -p "Enter disk label for $file or leave blank: " label <&3
+			fi
+			read -p "Enter the assumed format for $file: " format <&4
+			IFS='_' read -r AIP counter ext <<< "$AIPdir"
+			echo -e "
+			<file>
+				<objectid>"$AIPbase"</objectid>
+				<fixity>$(sha256sum "$file" | awk '{print $1}')</fixity>
+				<size>$(stat -c %s "$file")</size>
+				<format>"$format"</format>
+				<label>"$label"</label>
+				<reltype>structural</reltype>
+				<relsubtype>requires</relsubtype>
+				<linkedobjecttype>local</linkedobjecttype>
+				<linkedobjectvalue>"${AIP}"_"${counter}".cue</linkedobjectvalue>
+				<linkedeventtype>imaging</linkedeventtype>
+				<linkedeventvalue>"$eventid"</linkedeventvalue>
+			</file>" >> "$tempxml"
+		elif [[ "$extension" == "cue" ]]; then
+			IFS='_' read -r AIP counter ext <<< "$AIPdir"
+			echo -e "
+			<file>
+				<objectid>"$AIPbase"</objectid>
+				<fixity>$(sha256sum "$file" | awk '{print $1}')</fixity>
+				<size>$(stat -c %s "$file")</size>
+				<format>cue sheet file</format>
+				<reltype>structural</reltype>
+				<relsubtype>is Required By</relsubtype>
+				<linkedobjecttype>local</linkedobjecttype>
+				<linkedobjectvalue>"${AIP}"_"${counter}".bin</linkedobjectvalue>
+				<linkedeventtype>imaging</linkedeventtype>
+				<linkedeventvalue>"$eventid"</linkedeventvalue>
+			</file>" >> "$tempxml"
 		elif [[ "$extension" == "txt" ]]; then
 			IFS='_' read -r AIP counter ext <<< "$AIPdir"
 			echo -e "
@@ -271,7 +344,8 @@ if [[ "$premis" == true ]]; then
 		fi   
 	done
 	
-	exec 3<&-	
+	exec 3<&-
+	exec 4<&-	
 
 	echo -e "$agentxml" >> "$tempxml"
 	echo -e "$eventxml" >> "$tempxml" 
