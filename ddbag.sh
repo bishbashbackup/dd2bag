@@ -2,7 +2,7 @@
 
 # Script created 18/04/2024 7:26
 
-VERSION="0.4"
+VERSION="0.5"
 SCRIPTNAME="dd2bag"
 SCRIPTDIR="$(dirname ${0})"
 DATE="$(date +%m-%d-%Y-%T)"
@@ -36,7 +36,8 @@ Options:
  -l, --label			Adds information to "originalName" element in PREMIS XML output.
  -m, --multidisk		Enables prompt to image more than one disk
  -p, --premis			Generates a simple PREMIS XML file at top level of bagit directory
- -r, --retry <n>		Set the number of times ddrescue will retry scanning the disk. 
+ -r, --retry <n>		Set the number of times ddrescue will retry scanning the disk.
+ -i, --imager cdrdao		Sets the imager to use cdrdao instead of ddrescue, for audio CDs  
 
 EOF
 }
@@ -64,6 +65,9 @@ premis=false
 labeller=false
 retry=3
 
+# Load in variable(s) from config.txt
+source "$SCRIPTDIR/config.txt"
+
 # Parse short options
 OPTIND=1
 while getopts "hi:dlmpr:" opt ; do
@@ -81,9 +85,6 @@ done
 shift "$((OPTIND-1))"
 
 
-
-# Load in variable(s) from config.txt
-source "$SCRIPTDIR/config.txt"
 
 # Load in variable from first positional parameter
 if [[ -n "$1" && "$1" =~ ^[[:alnum:]._-]+$ ]]; then
@@ -129,39 +130,38 @@ _check_disk_error() {
 # Function to create disk images
 _disk-image() {
 	# Check if the disk is present using blkid
-	while true; do
-		if blkid /dev/sr0 &>/dev/null; then
-			if [[ "$imager" == cdrdao ]]; then
-#				cdrdao read-cd --read-raw --datafile \
-#				"$tempdir"/"$AIP"/"$AIP"_"$count".bin \
-#				"$tempdir"/"$AIP"/"$AIP"_"$count".toc
-#				_check_disk_error
-				read -p "Move files over" wait
-				toc2cue "$tempdir"/"$AIP"/"$AIP"_"$count".toc \
-				"$tempdir"/"$AIP"/"$AIP"_"$count"_temp.cue
-				_check_error "disk imaging"
-				sed "1s|^.*|FILE \"${AIP}_${count}.bin\" BINARY|" \
-				"$tempdir"/"$AIP"/"$AIP"_"$count"_temp.cue \
-				> "$tempdir"/"$AIP"/"$AIP"_"$count".cue
-				rm "$tempdir"/"$AIP"/"$AIP"_"$count".toc
-				rm "$tempdir"/"$AIP"/"$AIP"_"$count"_temp.cue
-				agentname=cdrdao
-			else			
-				ddrescuelogs="$tempdir/$AIP/${AIP}_${count}_ddrescuelogs"
-				mkdir -p "$ddrescuelogs"
-				ddrescue -r"$retry" $idirect \
-				--log-events="$ddrescuelogs"/eventlog.txt \
-				--log-rates="$ddrescuelogs"/ratelog.txt \
-				--log-reads="$ddrescuelogs"/readlog.txt \
-				$DRIVE "$tempdir"/"$AIP"/"$AIP"_"$count".dd \
-				"$ddrescuelogs"/mapfile.txt
-				_check_disk_error
-				agentname=ddrescue
-			fi
-#			touch "$tempdir"/"$AIP"/"$AIP"_"$count".txt
+	while true; do		
+		if [[ "$imager" == "ddrescue" ]] && blkid "$DRIVE" &>/dev/null; then			
+			ddrescuelogs="$tempdir/$AIP/${AIP}_${count}_ddrescuelogs"
+			mkdir -p "$ddrescuelogs"
+			ddrescue -r"$retry" $idirect \
+			--log-events="$ddrescuelogs"/eventlog.txt \
+			--log-rates="$ddrescuelogs"/ratelog.txt \
+			--log-reads="$ddrescuelogs"/readlog.txt \
+			$DRIVE "$tempdir"/"$AIP"/"$AIP"_"$count".dd \
+			"$ddrescuelogs"/mapfile.txt
+			_check_disk_error
+			agentname=ddrescue
+#			touch "$tempdir"/"$AIP"/"$AIP"_"$count".dd
 #			echo "this is content" > "$tempdir"/"$AIP"/"$AIP"_"$count".txt
-			echo "Created disk image $count"
-			break
+#			echo "Created disk image $count"
+			break			
+		elif [[ "$imager" == "cdrdao" ]] && cd-info "$DRIVE" &>/dev/null; then							
+			cdrdao read-cd --source-device "$DRIVE" \
+			--paranoia-mode 0 --read-raw --read-subchan rw_raw --datafile \
+			"$tempdir"/"$AIP"/"$AIP"_"$count".bin \
+			"$tempdir"/"$AIP"/"$AIP"_"$count".toc
+			_check_disk_error
+#			read -p "Move files over" wait
+			toc2cue "$tempdir"/"$AIP"/"$AIP"_"$count".toc \
+			"$tempdir"/"$AIP"/"$AIP"_"$count"_temp.cue
+			_check_error "disk imaging"
+			sed "1s|^.*|FILE \"${AIP}_${count}.bin\" BINARY|" \
+			"$tempdir"/"$AIP"/"$AIP"_"$count"_temp.cue \
+			> "$tempdir"/"$AIP"/"$AIP"_"$count".cue
+			rm "$tempdir"/"$AIP"/"$AIP"_"$count"_temp.cue
+			agentname=cdrdao
+			break				
 		else
 			read -p "Error: Disk not found. Try again? (Answer yes or no): " choice
 			if [[ "$choice" =~ ^(y|Y|yes|Yes|YES)$ ]]; then
@@ -177,7 +177,7 @@ _disk-image() {
 			else
 				echo "Invalid input. Please enter 'yes' or 'no'."
 			fi
-		fi
+		fi		
 	done
 }
 
@@ -279,9 +279,18 @@ if [[ "$premis" == true ]]; then
 		AIPdir=$(basename "$folderpath")	
 		
 		if [[ "$extension" == "dd" ]]; then
-			if  [[ "$labeller" == true ]]; then
-				read -p "Enter disk label for $file or leave blank: " label <&3
-			fi
+		if  [[ "$labeller" == true ]]; then
+			while true; do
+				read -rp "Enter disk label for $file or leave blank: " \
+				label <&3
+				if [[ -z "$label" || \
+				"$label" =~ ^[[:alnum:]_[:space:]-]+$ ]]; then
+				break  # Exit the loop if the input is valid
+				else
+				echo "Error: Special characters are not allowed. Try again."
+				fi
+			done
+		fi
 				
 			echo -e "
 			<file>
@@ -319,6 +328,21 @@ if [[ "$premis" == true ]]; then
 				<fixity>$(sha256sum "$file" | awk '{print $1}')</fixity>
 				<size>$(stat -c %s "$file")</size>
 				<format>cue sheet file</format>
+				<reltype>structural</reltype>
+				<relsubtype>is Required By</relsubtype>
+				<linkedobjecttype>local</linkedobjecttype>
+				<linkedobjectvalue>"${AIP}"_"${counter}".bin</linkedobjectvalue>
+				<linkedeventtype>imaging</linkedeventtype>
+				<linkedeventvalue>"$eventid"</linkedeventvalue>
+			</file>" >> "$tempxml"
+		elif [[ "$extension" == "toc" ]]; then
+			IFS='_' read -r AIP counter ext <<< "$AIPdir"
+			echo -e "
+			<file>
+				<objectid>"$AIPbase"</objectid>
+				<fixity>$(sha256sum "$file" | awk '{print $1}')</fixity>
+				<size>$(stat -c %s "$file")</size>
+				<format>table of contents file</format>
 				<reltype>structural</reltype>
 				<relsubtype>is Required By</relsubtype>
 				<linkedobjecttype>local</linkedobjecttype>
