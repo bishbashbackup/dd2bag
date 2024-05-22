@@ -4,7 +4,8 @@
 
 VERSION="0.5"
 SCRIPTNAME="dd2bag"
-SCRIPTDIR="$(dirname ${0})"
+SCRIPTPATH="$(readlink -f "${BASH_SOURCE[0]}")"
+SCRIPTDIR="$(dirname "$SCRIPTPATH")"
 DATE="$(date +%m-%d-%Y-%T)"
 count=1
 
@@ -32,7 +33,8 @@ Creates a disk image and then packages in a bagit format
 The default disk drive is set to: "/dev/sr0". If yours is different, this can be changed in the config.txt file.
 
 Options:
- -d, --idirect			Turns off ddrescue direct disc access, which is enabled by default
+ -d, --device			Manually set the path to the device you are imaging, i.e. /dev/sr1			
+ -D, --idirect			Turns off ddrescue direct disc access, which is enabled by default
  -l, --label			Adds information to "originalName" element in PREMIS XML output.
  -m, --multidisk		Enables prompt to image more than one disk
  -p, --premis			Generates a simple PREMIS XML file at top level of bagit directory
@@ -47,8 +49,9 @@ for arg in "$@"; do
   shift
   case "$arg" in
     '--help')			set -- "$@" '-h'   ;;
+    '--device')			set -- "$@" '-d'   ;;
     '--imager')			set -- "$@" '-i'   ;;
-    '--idirect')		set -- "$@" '-d'   ;;
+    '--idirect')		set -- "$@" '-D'   ;;
     '--label')			set -- "$@" '-l'   ;;
     '--multidisk')		set -- "$@" '-m'   ;;
     '--premis')			set -- "$@" '-p'   ;;
@@ -70,11 +73,12 @@ source "$SCRIPTDIR/config.txt"
 
 # Parse short options
 OPTIND=1
-while getopts "hi:dlmpr:" opt ; do
+while getopts "hd:i:Dlmpr:" opt ; do
 	case "$opt" in
 		'h') _help ; exit 0 ;;
+		'd') DRIVE=$OPTARG ;;
 		'i') imager=$OPTARG ;;
-		'd') idirect="" ;;
+		'D') idirect="" ;;
 		'l') labeller=true ;;
 		'm') multidisk=true ;;
 		'p') premis=true ;;
@@ -90,7 +94,8 @@ shift "$((OPTIND-1))"
 if [[ -n "$1" && "$1" =~ ^[[:alnum:]._-]+$ ]]; then
 	AIP="$1"
 else
-	echo "Invalid Input - AIP identifier can only contain alphanumeric characters, periods, underscores and hyphens"
+	echo "Invalid Input - You need to provide a valid AIP identifier in your command. This can only contain alphanumeric characters, periods, underscores and hyphens"
+	echo "Usage: $0 <input>"
 	exit 1
 fi
 
@@ -168,7 +173,7 @@ _disk-image() {
 				echo "Trying again..."
 				sleep 3			
 			elif [[ "$choice" =~ ^(n|N|no|No|NO)$ ]]; then
-				if [ -z "$(ls -A $tempdir/$AIP)" ]; then
+				if [ -z $(ls -A "$tempdir/$AIP") ]; then
 					echo "Exiting script"
 					exit 0
 				else
