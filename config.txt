@@ -1,2 +1,2 @@
 DRIVE="/dev/sr0"
-USER
+USER="unknown"
