@@ -82,11 +82,22 @@
 	    	</premis:eventIdentifier>
 		<premis:eventType>imaging</premis:eventType>
 		<premis:eventDateTime><xsl:apply-templates select="eventdate"/></premis:eventDateTime>
+		<premis:eventDetailInformation>
+			<premis:eventDetail><xsl:apply-templates select="eventdetail"/></premis:eventDetail>
+		</premis:eventDetailInformation>
+		<premis:eventOutcomeInformation>
+			<premis:eventOutcome><xsl:apply-templates select="eventoutcome"/></premis:eventOutcome>
+			<premis:eventOutcomeDetail>
+				<premis:eventOutcomeDetailNote><xsl:apply-templates select="eventoutcomedetail"/></premis:eventOutcomeDetailNote>
+			</premis:eventOutcomeDetail>
+		</premis:eventOutcomeInformation>
+	<xsl:for-each select="/data/agent">
 		<premis:linkingAgentIdentifier>
 			<premis:linkingAgentIdentifierType>local</premis:linkingAgentIdentifierType>
-			<premis:linkingAgentIdentifierValue><xsl:apply-templates select="//data/agent/agentname" /></premis:linkingAgentIdentifierValue>
-			<premis:linkingAgentRole>executing program</premis:linkingAgentRole>
+			<premis:linkingAgentIdentifierValue><xsl:value-of select="agentname" /></premis:linkingAgentIdentifierValue>
+			<premis:linkingAgentRole><xsl:value-of select="agentrole" /></premis:linkingAgentRole>
 	    	</premis:linkingAgentIdentifier>
+	    </xsl:for-each>
     </premis:event>
 </xsl:template>
 
